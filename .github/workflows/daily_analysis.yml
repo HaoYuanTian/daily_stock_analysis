@@ -4,8 +4,10 @@ on:
   # Scheduled runs use UTC. Beijing time is UTC+8.
   # The application performs a second trading-calendar check and skips market holidays.
   schedule:
-    - cron: '30 3 * * 1-5'   # 11:30 Beijing time: midday market update.
-    - cron: '7 10 * * 1-5'   # 18:07 Beijing time: closing update, away from the top of the hour.
+    - cron: '30 3 * * 1-5'   # 11:30 Beijing time: primary midday update.
+    - cron: '45 3 * * 1-5'   # 11:45 Beijing time: midday fallback; skipped after a successful primary run.
+    - cron: '7 10 * * 1-5'   # 18:07 Beijing time: primary closing update.
+    - cron: '22 10 * * 1-5'  # 18:22 Beijing time: closing fallback; skipped after a successful primary run.
   
   # 手动触发
   workflow_dispatch:
@@ -33,7 +35,62 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      cache_key: ${{ steps.session.outputs.cache_key }}
+      should_run: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - name: Resolve analysis session
+        id: session
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            slot="manual-${{ github.run_id }}"
+            run_date="$(TZ='Asia/Shanghai' date '+%Y%m%d')"
+          else
+            case "${{ github.event.schedule }}" in
+              "30 3 * * 1-5"|"45 3 * * 1-5") slot="midday" ;;
+              "7 10 * * 1-5"|"22 10 * * 1-5") slot="close" ;;
+              *) slot="scheduled" ;;
+            esac
+
+            # Treat delayed runs before 06:00 Beijing time as belonging to the previous trading date.
+            beijing_hour="$(TZ='Asia/Shanghai' date '+%H')"
+            if [ "$beijing_hour" -lt 6 ]; then
+              run_date="$(TZ='Asia/Shanghai' date -d 'yesterday' '+%Y%m%d')"
+            else
+              run_date="$(TZ='Asia/Shanghai' date '+%Y%m%d')"
+            fi
+          fi
+
+          echo "slot=$slot" >> "$GITHUB_OUTPUT"
+          echo "run_date=$run_date" >> "$GITHUB_OUTPUT"
+          echo "cache_key=stock-analysis-completed-$run_date-$slot" >> "$GITHUB_OUTPUT"
+
+      - name: Check scheduled-session completion marker
+        id: completion
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .schedule-state
+          key: ${{ steps.session.outputs.cache_key }}
+          lookup-only: true
+
+      - name: Decide whether analysis is required
+        id: decide
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.completion.outputs.cache-hit }}" = "true" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Scheduled session already completed; skipping fallback run."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   analyze:
+    needs: preflight
+    if: needs.preflight.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     # 添加超时限制，防止任务卡死
     timeout-minutes: 30
@@ -223,6 +280,19 @@ jobs:
             python main.py $FORCE_RUN_ARG
           fi
       
+      - name: Mark scheduled session completed
+        if: success() && github.event_name == 'schedule'
+        run: |
+          mkdir -p .schedule-state
+          printf '%s\n' "completed_at=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')" > .schedule-state/completed
+
+      - name: Save scheduled-session completion marker
+        if: success() && github.event_name == 'schedule'
+        uses: actions/cache/save@v4
+        with:
+          path: .schedule-state
+          key: ${{ needs.preflight.outputs.cache_key }}
+
       - name: 上传分析报告
         uses: actions/upload-artifact@v4
         if: always()
