@@ -4,10 +4,7 @@ on:
   # Scheduled runs use UTC. Beijing time is UTC+8.
   # The application performs a second trading-calendar check and skips market holidays.
   schedule:
-    - cron: '30 3 * * 1-5'   # 11:30 Beijing time: primary midday update.
-    - cron: '45 3 * * 1-5'   # 11:45 Beijing time: midday fallback; skipped after a successful primary run.
-    - cron: '7 10 * * 1-5'   # 18:07 Beijing time: primary closing update.
-    - cron: '22 10 * * 1-5'  # 18:22 Beijing time: closing fallback; skipped after a successful primary run.
+    - cron: '36 8 * * 1-5'   # 16:36 Beijing time: single post-close analysis.
   
   # 手动触发
   workflow_dispatch:
@@ -50,8 +47,7 @@ jobs:
             run_date="$(TZ='Asia/Shanghai' date '+%Y%m%d')"
           else
             case "${{ github.event.schedule }}" in
-              "30 3 * * 1-5"|"45 3 * * 1-5") slot="midday" ;;
-              "7 10 * * 1-5"|"22 10 * * 1-5") slot="close" ;;
+              "36 8 * * 1-5") slot="close" ;;
               *) slot="scheduled" ;;
             esac
 
@@ -83,7 +79,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.completion.outputs.cache-hit }}" = "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Scheduled session already completed; skipping fallback run."
+            echo "Scheduled session already completed; skipping duplicate run."
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           fi
@@ -96,9 +92,6 @@ jobs:
     timeout-minutes: 30
     
     steps:
-      - name: 随机延迟（避免固定时间访问）
-        run: sleep $((RANDOM % 60))  # 随机延迟0-60秒启动
-      
       - name: 检出代码
         uses: actions/checkout@v5
       
@@ -211,7 +204,7 @@ jobs:
           # ==========================================
           # 运行配置 ⬅️ 新增！
           # ==========================================
-          REPORT_TYPE: ${{ vars.REPORT_TYPE || secrets.REPORT_TYPE || 'simple' }}
+          REPORT_TYPE: 'full'
           SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY || 'false' }}
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED || 'true' }}
           ANALYSIS_DELAY: ${{ vars.ANALYSIS_DELAY || secrets.ANALYSIS_DELAY || '0' }}
