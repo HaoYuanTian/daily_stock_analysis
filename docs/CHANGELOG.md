@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- ⏰ **每日分析定时触发** — 将北京时间工作日 16:36 的单次收盘后任务调整为 16:37，并同步工作流中的时段识别；用于重新登记近期未产生运行记录的定时计划。GitHub 的定时投递结果仍需在下一次计划时间验证；README 同步修正已过时的双时段说明
 - 🔎 **Fetcher failure observability** — historical data logs now record fetcher start/success/failure with elapsed time, explicit failover transitions, and clearer final outcomes; Efinance/Eastmoney failures now include upstream endpoint and normalized categories such as `remote_disconnect` and `timeout`; Akshare 新浪/腾讯实时行情日志 now also include upstream endpoint and classified failures for HTTP status, disconnects, and malformed payloads
 ### Added
-- ⏰ **交易日双时段推送与自动补跑** — GitHub Actions 在交易日北京时间 11:30 推送上午盘中更新，并在 18:07 推送收盘后更新；11:45 与 18:22 提供备用触发，使用按日期和时段区分的成功缓存去重，仅在主任务未成功时补跑；保留交易日二次检查，并将手动与定时任务拆分到不同并发组
 - 📖 **LLM 配置指南** — 新增 [docs/LLM_CONFIG_GUIDE.md](LLM_CONFIG_GUIDE.md)，系统讲解三层配置、快速上手、Vision/Agent/Web UI/校验排错；同步更新 README、full-guide、.env.example、FAQ、英文版指南
 
 ## [3.4.10] - 2026-03-07
