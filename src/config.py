@@ -77,6 +77,7 @@ class Config:
     feishu_folder_token: Optional[str] = None  # 目标文件夹 Token
 
     # === 数据源 API Token ===
+    hithink_finance_api_key: Optional[str] = field(default=None, repr=False)
     tushare_token: Optional[str] = None
     
     # === AI 分析配置 ===
@@ -551,6 +552,7 @@ class Config:
             feishu_app_id=os.getenv('FEISHU_APP_ID'),
             feishu_app_secret=os.getenv('FEISHU_APP_SECRET'),
             feishu_folder_token=os.getenv('FEISHU_FOLDER_TOKEN'),
+            hithink_finance_api_key=os.getenv('HITHINK_FINANCE_API_KEY'),
             tushare_token=os.getenv('TUSHARE_TOKEN'),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
@@ -962,33 +964,17 @@ class Config:
 
     @classmethod
     def _resolve_realtime_source_priority(cls) -> str:
-        """
-        Resolve realtime source priority with automatic tushare injection.
-
-        When TUSHARE_TOKEN is configured but REALTIME_SOURCE_PRIORITY is not
-        explicitly set, automatically prepend 'tushare' to the default priority
-        so that the paid data source is utilized for realtime quotes as well.
-        """
+        """Use the configured order, or prefer available authenticated quote providers."""
         explicit = os.getenv('REALTIME_SOURCE_PRIORITY')
-        default_priority = 'tencent,akshare_sina,efinance,akshare_em'
-
         if explicit:
-            # User explicitly set priority, respect it
             return explicit
 
-        tushare_token = os.getenv('TUSHARE_TOKEN', '').strip()
-        if tushare_token:
-            # Token configured but no explicit priority override
-            # Prepend tushare so the paid source is tried first
-            import logging
-            logger = logging.getLogger(__name__)
-            resolved = f'tushare,{default_priority}'
-            logger.info(
-                f"TUSHARE_TOKEN detected, auto-injecting tushare into realtime priority: {resolved}"
-            )
-            return resolved
-
-        return default_priority
+        sources = ['tencent', 'akshare_sina', 'efinance', 'akshare_em']
+        if os.getenv('TUSHARE_TOKEN', '').strip():
+            sources.insert(0, 'tushare')
+        if os.getenv('HITHINK_FINANCE_API_KEY', '').strip():
+            sources.insert(0, 'hithink')
+        return ','.join(sources)
 
     @classmethod
     def reset_instance(cls) -> None:
@@ -1084,7 +1070,8 @@ class Config:
 
         # --- Search engine (informational only) ---
         if not (
-            self.bocha_api_keys
+            self.hithink_finance_api_key
+            or self.bocha_api_keys
             or self.tavily_api_keys
             or self.brave_api_keys
             or self.serpapi_keys

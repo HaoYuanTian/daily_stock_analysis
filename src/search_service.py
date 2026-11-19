@@ -29,7 +29,9 @@ from tenacity import (
     before_sleep_log,
 )
 
+from data_provider.base import normalize_stock_code
 from data_provider.us_index_mapping import is_us_index_code
+from src.hithink import SHANGHAI, HithinkClient
 
 logger = logging.getLogger(__name__)
 
@@ -936,6 +938,7 @@ class SearchService:
         brave_keys: Optional[List[str]] = None,
         serpapi_keys: Optional[List[str]] = None,
         news_max_age_days: int = 3,
+        hithink_api_key: Optional[str] = None,
     ):
         """
         初始化搜索服务
@@ -948,6 +951,7 @@ class SearchService:
             news_max_age_days: 新闻最大时效（天）
         """
         self._providers: List[BaseSearchProvider] = []
+        self.hithink = HithinkClient(hithink_api_key) if hithink_api_key else None
         self.news_max_age_days = max(1, news_max_age_days)
 
         # 初始化搜索引擎（按优先级排序）
@@ -971,7 +975,7 @@ class SearchService:
             self._providers.append(SerpAPISearchProvider(serpapi_keys))
             logger.info(f"已配置 SerpAPI 搜索，共 {len(serpapi_keys)} 个 API Key")
         
-        if not self._providers:
+        if not self.hithink and not self._providers:
             logger.warning("未配置任何搜索引擎 API Key，新闻搜索功能将不可用")
 
         # In-memory search result cache: {cache_key: (timestamp, SearchResponse)}
@@ -1023,7 +1027,7 @@ class SearchService:
     @property
     def is_available(self) -> bool:
         """检查是否有可用的搜索引擎"""
-        return any(p.is_available for p in self._providers)
+        return self.hithink is not None or any(p.is_available for p in self._providers)
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
@@ -1059,6 +1063,35 @@ class SearchService:
                     del self._cache[k]
         self._cache[key] = (time.time(), response)
     
+    def _hithink_news(self, stock_code, stock_name, limit, days):
+        if not self.hithink or limit < 1:
+            return None
+        try:
+            stock = self.hithink.stock(normalize_stock_code(stock_code))
+            if not stock:
+                return None
+            data = self.hithink.get(
+                "news/stock/timeline-list", thscode=stock["thscode"], offset="first", size=min(limit, 100),
+            )
+            now = time.time()
+            results = []
+            for item in data["items"]:
+                published = item.get("publish_time_ms")
+                if not published or not (now - days * 86400 <= published / 1000 <= now) or not item.get("title"):
+                    continue
+                results.append(SearchResult(
+                    title=item["title"], snippet=item.get("summary") or "", url=item.get("jump_url") or "",
+                    source=item.get("source") or "同花顺", published_date=datetime.fromtimestamp(
+                        published / 1000, SHANGHAI
+                    ).isoformat(timespec="seconds"),
+                ))
+            if results:
+                logger.info("[Hithink] %s: %d recent stock news items", stock_code, len(results))
+                return SearchResponse(query=f"{stock_name} {stock_code} 最新消息", results=results, provider="同花顺")
+        except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
+            logger.warning("[Hithink] Stock news unavailable for %s: %s", stock_code, exc)
+        return None
+
     def search_stock_news(
         self,
         stock_code: str,
@@ -1113,6 +1146,12 @@ class SearchService:
         if cached is not None:
             logger.info(f"使用缓存搜索结果: {stock_name}({stock_code})")
             return cached
+
+        if not focus_keywords:
+            news = self._hithink_news(stock_code, stock_name, max_results, search_days)
+            if news:
+                self._put_cache(cache_key, news)
+                return news
 
         # 依次尝试各个搜索引擎
         for provider in self._providers:
@@ -1258,6 +1297,13 @@ class SearchService:
             if search_count >= max_searches:
                 break
             
+            if dim["name"] == "latest_news":
+                news = self._hithink_news(stock_code, stock_name, 3, self.news_max_age_days)
+                if news:
+                    results["latest_news"] = news
+                    search_count += 1
+                    continue
+
             # 选择搜索引擎（轮流使用）
             available_providers = [p for p in self._providers if p.is_available]
             if not available_providers:
@@ -1552,6 +1598,7 @@ def get_search_service() -> SearchService:
             brave_keys=config.brave_api_keys,
             serpapi_keys=config.serpapi_keys,
             news_max_age_days=config.news_max_age_days,
+            hithink_api_key=config.hithink_finance_api_key,
         )
     
     return _search_service

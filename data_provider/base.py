@@ -462,6 +462,11 @@ class DataFetcherManager:
             yfinance,
         ]
 
+        if config.hithink_finance_api_key:
+            from .hithink_fetcher import HithinkFetcher
+
+            self._fetchers.append(HithinkFetcher(config.hithink_finance_api_key))
+
         # 按优先级排序（Tushare 如果配置了 Token 且初始化成功，优先级为 0）
         self._fetchers.sort(key=lambda f: f.priority)
 
@@ -752,7 +757,12 @@ class DataFetcherManager:
             try:
                 quote = None
                 
-                if source == "efinance":
+                if source == "hithink":
+                    fetcher = next((f for f in self._fetchers if f.name == "HithinkFetcher"), None)
+                    if fetcher:
+                        quote = fetcher.get_realtime_quote(stock_code)
+
+                elif source == "efinance":
                     # 尝试 EfinanceFetcher
                     for fetcher in self._fetchers:
                         if fetcher.name == "EfinanceFetcher":

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- 新增可选同花顺金融数据源，为 A 股日线、行情快照、主要指数及个股新闻提供首选数据，保留原有回退路径。
+
 ### Changed
 - ⏰ **每日分析定时触发** — 将北京时间工作日 16:36 的单次收盘后任务调整为 16:37，并同步工作流中的时段识别；用于重新登记近期未产生运行记录的定时计划。GitHub 的定时投递结果仍需在下一次计划时间验证；README 同步修正已过时的双时段说明
 - 🔎 **Fetcher failure observability** — historical data logs now record fetcher start/success/failure with elapsed time, explicit failover transitions, and clearer final outcomes; Efinance/Eastmoney failures now include upstream endpoint and normalized categories such as `remote_disconnect` and `timeout`; Akshare 新浪/腾讯实时行情日志 now also include upstream endpoint and classified failures for HTTP status, disconnects, and malformed payloads
