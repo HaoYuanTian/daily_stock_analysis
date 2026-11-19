@@ -1,4 +1,4 @@
-"""Hithink A-share daily bars, stock quotes and mainland benchmark quotes."""
+"""Hithink mainland stock and ETF prices and mainland benchmark quotes."""
 
 import pandas as pd
 
@@ -16,15 +16,19 @@ class HithinkFetcher(BaseFetcher):
         self.client = HithinkClient(api_key)
 
     def _fetch_raw_data(self, stock_code, start_date, end_date):
-        stock = self.client.stock(stock_code)
-        if not stock:
-            raise DataFetchError(f"No Hithink A-share match for {stock_code}")
+        instrument = self.client.instrument(stock_code, "a-share,fund-etf")
+        if not instrument:
+            raise DataFetchError(f"No Hithink stock or ETF match for {stock_code}")
         start = pd.Timestamp(start_date, tz=SHANGHAI)
         end = pd.Timestamp(end_date, tz=SHANGHAI) + pd.Timedelta(days=1) - pd.Timedelta(milliseconds=1)
-        data = self.client.get(
-            "a-share/prices/historical", thscode=stock["thscode"], interval="1d",
-            start=start.value // 1_000_000, end=end.value // 1_000_000, adjust="forward",
-        )
+        params = dict(thscode=instrument["thscode"], interval="1d",
+                      start=start.value // 1_000_000, end=end.value // 1_000_000)
+        if instrument["asset_type"] == "fund-etf":
+            data = self.client.get("fund/market/historical", **params)
+            if data.get("thscode") != instrument["thscode"]:
+                raise DataFetchError(f"Unexpected Hithink ETF history for {stock_code}")
+        else:
+            data = self.client.get("a-share/prices/historical", adjust="forward", **params)
         return pd.DataFrame(data["item"])
 
     def _normalize_data(self, df, stock_code):
@@ -38,18 +42,23 @@ class HithinkFetcher(BaseFetcher):
         return bars[STANDARD_COLUMNS]
 
     def get_realtime_quote(self, stock_code):
-        stock = self.client.stock(stock_code)
-        if not stock:
+        instrument = self.client.instrument(stock_code, "a-share,fund-etf")
+        if not instrument:
             return None
-        rows = self.client.get("a-share/prices/snapshot", thscodes=stock["thscode"])["item"]
+        if instrument["asset_type"] == "fund-etf":
+            snapshot = self.client.get("fund/market/snapshot", thscode=instrument["thscode"])
+        else:
+            snapshot = self.client.get("a-share/prices/snapshot", thscodes=instrument["thscode"])
+        rows = snapshot["item"]
         for row in rows:
-            if row.get("thscode") == stock["thscode"] and (row.get("last_price") or 0) > 0:
+            if row.get("thscode") == instrument["thscode"] and (row.get("last_price") or 0) > 0:
                 volume = row.get("volume")
                 return UnifiedRealtimeQuote(
-                    code=stock_code, name=stock.get("name") or "", source=RealtimeSource.HITHINK,
+                    code=stock_code, name=instrument.get("name") or "", source=RealtimeSource.HITHINK,
                     price=row["last_price"], change_pct=row.get("price_change_ratio_pct"),
                     change_amount=row.get("price_change"), amount=row.get("turnover"),
                     volume=int(volume // 100) if volume is not None else None,
+                    amplitude=row.get("price_amplitude_ratio_pct"), turnover_rate=row.get("turnover_ratio_pct"),
                     open_price=row.get("open_price"), high=row.get("high_price"),
                     low=row.get("low_price"), pre_close=row.get("prev_price"),
                 )

@@ -27,10 +27,14 @@ class HithinkClient:
         return payload["data"]
 
     @lru_cache(maxsize=512)
-    def stock(self, ticker: str):
-        """Resolve only exact A-share matches; funds and overseas symbols use their own providers."""
+    def instrument(self, ticker: str, asset_types: str):
+        """Resolve one exact ticker match among the requested asset types."""
         if not (len(ticker) == 6 and ticker.isascii() and ticker.isdigit()):
             return None
-        rows = self.get("meta/tickers/search", q=ticker, asset_type="a-share")["item"]
-        matches = [r for r in rows if r.get("ticker") == ticker and r.get("asset_type") == "a-share" and r.get("thscode")]
+        rows = self.get("meta/tickers/search", q=ticker, asset_type=asset_types)["item"]
+        allowed = asset_types.split(",")
+        matches = [r for r in rows if r.get("ticker") == ticker and r.get("asset_type") in allowed and r.get("thscode")]
         return matches[0] if len(matches) == 1 else None
+
+    def stock(self, ticker: str):
+        return self.instrument(ticker, "a-share")
